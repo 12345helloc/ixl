@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Screen + Webcam + Audio Recorder</title>
+<style>
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #111;
+    color: #fff;
+    font-family: sans-serif;
+  }
+  #preview {
+    position: relative;
+    width: 80vw;
+    max-width: 1280px;
+    margin-top: 20px;
+    border: 2px solid #fff;
+  }
+  video {
+    width: 100%;
+  }
+  #webcam {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 160px;
+    height: 120px;
+    border: 2px solid #fff;
+    background: black;
+  }
+  button {
+    margin: 10px;
+    padding: 10px 20px;
+    font-size: 16px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Screen + Webcam + Audio Recorder</h1>
+<div id="preview">
+  <video id="screenVideo" autoplay muted></video>
+  <video id="webcam" autoplay muted></video>
+</div>
+
+<button id="startBtn">Start Recording</button>
+<button id="stopBtn" disabled>Stop Recording</button>
+
+<script>
+let screenStream;
+let webcamStream;
+let combinedStream;
+let mediaRecorder;
+let recordedChunks = [];
+
+const screenVideo = document.getElementById("screenVideo");
+const webcamVideo = document.getElementById("webcam");
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+
+async function startRecording() {
+  try {
+    // 1️⃣ Capture screen with system audio
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: "always" },
+      audio: true // system audio
+    });
+    screenVideo.srcObject = screenStream;
+
+    // 2️⃣ Capture webcam with mic
+    webcamStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 160, height: 120 },
+      audio: true // mic
+    });
+    webcamVideo.srcObject = webcamStream;
+
+    // 3️⃣ Combine screen + webcam video via canvas
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const screenTrack = screenStream.getVideoTracks()[0];
+    const screenSettings = screenTrack.getSettings();
+    canvas.width = screenSettings.width;
+    canvas.height = screenSettings.height;
+
+    const canvasStream = canvas.captureStream(30); // 30 FPS
+
+    // 4️⃣ Merge audio (system + mic)
+    const audioContext = new AudioContext();
+    const destination = audioContext.createMediaStreamDestination();
+
+    const systemSource = audioContext.createMediaStreamSource(screenStream);
+    systemSource.connect(destination);
+
+    const micSource = audioContext.createMediaStreamSource(webcamStream);
+    micSource.connect(destination);
+
+    // 5️⃣ Add audio tracks to canvas stream
+    destination.stream.getAudioTracks().forEach(track => {
+      canvasStream.addTrack(track);
+    });
+
+    combinedStream = canvasStream;
+
+    // 6️⃣ Setup MediaRecorder
+    mediaRecorder = new MediaRecorder(combinedStream);
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "recording.webm";
+      a.click();
+      recordedChunks = [];
+    };
+
+    // 7️⃣ Draw loop: overlay webcam on screen
+    function drawFrame() {
+      ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(webcamVideo, canvas.width - 170, 10, 160, 120);
+      requestAnimationFrame(drawFrame);
+    }
+    drawFrame();
+
+    mediaRecorder.start();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+  } catch (err) {
+    alert("Error: " + err);
+    console.error(err);
+  }
+}
+
+function stopRecording() {
+  mediaRecorder.stop();
+  screenStream.getTracks().forEach(track => track.stop());
+  webcamStream.getTracks().forEach(track => track.stop());
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+}
+
+startBtn.addEventListener("click", startRecording);
+stopBtn.addEventListener("click", stopRecording);
+</script>
+
+</body>
+</html>
